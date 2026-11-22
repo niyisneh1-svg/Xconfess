@@ -1555,6 +1555,10 @@ export class ConfessionService {
       message: String(decryptedMessage),
       createdAt: confession.created_at,
       updatedAt: confession.created_at,
+      isAnchored: confession.isAnchored ?? false,
+      stellarTxHash: confession.stellarTxHash ?? null,
+      stellarHash: confession.stellarHash ?? null,
+      anchoredAt: confession.anchoredAt ?? null,
     });
   }
 

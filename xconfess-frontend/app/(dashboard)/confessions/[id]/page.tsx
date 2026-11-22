@@ -35,6 +35,8 @@ async function getConfession(id: string) {
         data.requiresReview === true ||
         data.moderationStatus === "flagged",
       stellarTxHash: data.stellarTxHash ?? null,
+      stellarHash: data.stellarHash ?? null,
+      anchoredAt: data.anchoredAt ?? null,
       anchorStatus:
         data.anchorStatus ??
         (data.isAnchored || data.is_anchored

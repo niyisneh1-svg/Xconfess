@@ -81,6 +81,8 @@ export async function GET(
         data.requiresReview === true ||
         data.moderationStatus === "flagged",
       stellarTxHash: data.stellarTxHash ?? data.stellar_tx_hash ?? null,
+      stellarHash: data.stellarHash ?? data.stellar_hash ?? null,
+      anchoredAt: data.anchoredAt ?? data.anchored_at ?? null,
       author: data.anonymousUser
         ? { id: data.anonymousUser.id, username: "Anonymous", avatar: null }
         : undefined,

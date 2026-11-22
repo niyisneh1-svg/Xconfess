@@ -26,6 +26,7 @@ pub const UPGRADE_POLICY_VERSION: u32 = 1;
 
 const CAPABILITY_ANCHOR_V1: Symbol = symbol_short!("anchorv1");
 const CAPABILITY_VERIFY_V1: Symbol = symbol_short!("verifyv1");
+const CAPABILITY_ROOT_V1: Symbol = symbol_short!("rootv1");
 const CAPABILITY_COUNT_V1: Symbol = symbol_short!("countv1");
 const CAPABILITY_EVENT_V1: Symbol = symbol_short!("eventsv1");
 const CAPABILITY_META_V1: Symbol = symbol_short!("meta_v1");
@@ -51,7 +52,12 @@ pub enum DataKey {
     /// Absent before `migrate()` is called; 0 means no anchor has occurred
     /// since migration (i.e. pre-migration anchors are not back-filled).
     LastAnchorTimestamp,
+    /// Root of a Merkle tree containing confession commitments.
+    AnchorRoot(BytesN<32>),
 }
+
+const ANCHOR_ROOT_TTL_THRESHOLD: u32 = 100_000;
+const ANCHOR_ROOT_TTL_LEDGERS: u32 = 200_000;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -99,6 +105,14 @@ pub struct ConfessionAnchoredEvent {
     pub event_version: u32,
     pub timestamp: u64,
     pub anchor_height: u32,
+}
+
+#[contractevent(topics = ["anchor_root_recorded"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnchorRootRecordedEvent {
+    #[topic]
+    pub root: BytesN<32>,
+    pub ledger: u32,
 }
 
 #[contractevent(topics = ["version_compatibility_checked"], data_format = "vec")]
@@ -187,6 +201,7 @@ fn supported_capabilities(env: &Env) -> Vec<Symbol> {
     let mut out = Vec::new(env);
     out.push_back(CAPABILITY_ANCHOR_V1);
     out.push_back(CAPABILITY_VERIFY_V1);
+    out.push_back(CAPABILITY_ROOT_V1);
     out.push_back(CAPABILITY_COUNT_V1);
     out.push_back(CAPABILITY_EVENT_V1);
     out.push_back(CAPABILITY_META_V1);
@@ -267,6 +282,57 @@ impl ConfessionAnchor {
             .expect("confession data must exist if key is present");
 
         Some(data.timestamp)
+    }
+
+    /// Record an immutable Merkle root for independent commitment proofs.
+    /// Only the contract owner or an admin may publish roots.
+    /// Repeating a registration is idempotent and returns the original ledger.
+    pub fn record_anchor_root(
+        env: Env,
+        caller: Address,
+        root: BytesN<32>,
+    ) -> Result<u32, Error> {
+        access_control::require_admin_or_owner(&env, &caller).map_err(Error::from)?;
+
+        let key = DataKey::AnchorRoot(root.clone());
+        let storage = env.storage().persistent();
+        if let Some(ledger) = storage.get::<_, u32>(&key) {
+            storage.extend_ttl(
+                &key,
+                ANCHOR_ROOT_TTL_THRESHOLD,
+                ANCHOR_ROOT_TTL_LEDGERS,
+            );
+            return Ok(ledger);
+        }
+
+        let ledger = env.ledger().sequence();
+        storage.set(&key, &ledger);
+        storage.extend_ttl(
+            &key,
+            ANCHOR_ROOT_TTL_THRESHOLD,
+            ANCHOR_ROOT_TTL_LEDGERS,
+        );
+        AnchorRootRecordedEvent {
+            root,
+            ledger,
+        }
+        .publish(&env);
+
+        Ok(ledger)
+    }
+
+    /// Return the ledger where a root was recorded, renewing its TTL.
+    /// `None` means the root is not currently recorded by this contract.
+    pub fn verify_anchor_root(env: Env, root: BytesN<32>) -> Option<u32> {
+        let key = DataKey::AnchorRoot(root);
+        let storage = env.storage().persistent();
+        let ledger = storage.get::<_, u32>(&key)?;
+        storage.extend_ttl(
+            &key,
+            ANCHOR_ROOT_TTL_THRESHOLD,
+            ANCHOR_ROOT_TTL_LEDGERS,
+        );
+        Some(ledger)
     }
 
     /// Return the total number of unique anchored confessions.
@@ -686,6 +752,26 @@ mod test {
 
         let result = client.verify_confession(&hash);
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn anchor_root_is_admin_recorded_immutable_and_readable() {
+        let (env, client) = new_client();
+        let owner = Address::generate(&env);
+        let unauthorized = Address::generate(&env);
+        let root = sample_hash(&env, 0xA1);
+
+        client.initialize(&owner);
+        let first_ledger = client.record_anchor_root(&owner, &root);
+        advance_ledger(&env, 1);
+
+        assert_eq!(client.verify_anchor_root(&root), Some(first_ledger));
+        assert_eq!(client.record_anchor_root(&owner, &root), first_ledger);
+        assert_eq!(client.verify_anchor_root(&root), Some(first_ledger));
+        assert!(client
+            .try_record_anchor_root(&unauthorized, &sample_hash(&env, 0xA2))
+            .is_err());
+        assert_eq!(client.verify_anchor_root(&sample_hash(&env, 0xA2)), None);
     }
 
     #[test]
@@ -1133,14 +1219,15 @@ mod test {
 
         assert_eq!(info.event_schema_version, events::EVENT_SCHEMA_VERSION);
         assert_eq!(info.error_registry_version, errors::ERROR_REGISTRY_VERSION);
-        assert_eq!(info.capabilities.len(), 7);
+        assert_eq!(info.capabilities.len(), 8);
         assert_eq!(info.capabilities.get(0), Some(CAPABILITY_ANCHOR_V1));
         assert_eq!(info.capabilities.get(1), Some(CAPABILITY_VERIFY_V1));
-        assert_eq!(info.capabilities.get(2), Some(CAPABILITY_COUNT_V1));
-        assert_eq!(info.capabilities.get(3), Some(CAPABILITY_EVENT_V1));
-        assert_eq!(info.capabilities.get(4), Some(CAPABILITY_META_V1));
-        assert_eq!(info.capabilities.get(5), Some(CAPABILITY_ADMIN_V1));
-        assert_eq!(info.capabilities.get(6), Some(CAPABILITY_PAUSE_V1));
+        assert_eq!(info.capabilities.get(2), Some(CAPABILITY_ROOT_V1));
+        assert_eq!(info.capabilities.get(3), Some(CAPABILITY_COUNT_V1));
+        assert_eq!(info.capabilities.get(4), Some(CAPABILITY_EVENT_V1));
+        assert_eq!(info.capabilities.get(5), Some(CAPABILITY_META_V1));
+        assert_eq!(info.capabilities.get(6), Some(CAPABILITY_ADMIN_V1));
+        assert_eq!(info.capabilities.get(7), Some(CAPABILITY_PAUSE_V1));
     }
 
     #[test]
@@ -1149,6 +1236,7 @@ mod test {
 
         assert!(client.has_capability(&CAPABILITY_META_V1));
         assert!(client.has_capability(&CAPABILITY_ANCHOR_V1));
+        assert!(client.has_capability(&CAPABILITY_ROOT_V1));
         assert!(!client.has_capability(&symbol_short!("unknwnv1")));
     }
 

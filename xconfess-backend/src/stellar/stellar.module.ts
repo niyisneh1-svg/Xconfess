@@ -21,6 +21,8 @@ import { SorobanEventCheckpointService } from './soroban-event-checkpoint.servic
 import { SorobanEventRangeVerifierService } from './soroban-event-range-verifier.service';
 import { StellarRpcEndpointPoolService } from './stellar-rpc-endpoint-pool.service';
 import { AccountSequenceCoordinatorService } from './account-sequence-coordinator.service';
+import { StellarAnchorProof } from './entities/stellar-anchor-proof.entity';
+import { AnchorProofService } from './anchor-proof.service';
 
 @Module({
   imports: [
@@ -33,6 +35,7 @@ import { AccountSequenceCoordinatorService } from './account-sequence-coordinato
       ReputationReconciliationCheckpoint,
       AnonymousConfession,
       Tip,
+      StellarAnchorProof,
     ]),
   ],
   providers: [
@@ -48,6 +51,7 @@ import { AccountSequenceCoordinatorService } from './account-sequence-coordinato
     SorobanEventRangeVerifierService,
     StellarRpcEndpointPoolService,
     AccountSequenceCoordinatorService,
+    AnchorProofService,
   ],
   controllers: [StellarController],
   exports: [
@@ -60,6 +64,7 @@ import { AccountSequenceCoordinatorService } from './account-sequence-coordinato
     SorobanEventRangeVerifierService,
     StellarRpcEndpointPoolService,
     AccountSequenceCoordinatorService,
+    AnchorProofService,
   ],
 })
 export class StellarModule {}

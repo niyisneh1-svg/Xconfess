@@ -10,6 +10,8 @@ import {
   Query,
   Req,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiOkResponse, ApiParam } from '@nestjs/swagger';
 import { StellarConfigResponseDto } from './dto/stellar-config-response.dto';
@@ -37,6 +39,8 @@ import {
 } from './stellar-invocation-audit';
 import { redactSecretStrings } from '../utils/redact-secrets';
 import { RequestCost, COST } from '../common/guards/cost-throttler.guard';
+import { AnchorProofService } from './anchor-proof.service';
+import { VerifyAnchorProofDto } from './dto/verify-anchor-proof.dto';
 
 @ApiTags('Stellar')
 @Controller('stellar')
@@ -49,6 +53,7 @@ export class StellarController {
     private configService: ConfigService,
     private auditLogService: AuditLogService,
     private eventRangeVerifierService: EventRangeVerifierService,
+    private anchorProofService: AnchorProofService,
   ) {}
 
   @Get('anchors')
@@ -118,6 +123,42 @@ export class StellarController {
       isAnchored: timestamp !== null,
       timestamp,
     };
+  }
+
+  @Post('anchor/verify-proof')
+  @RequestCost(COST.CHAIN)
+  @ApiOperation({
+    summary: 'Independently verify and persist a confession Merkle inclusion proof',
+    description:
+      'Checks the proof locally, then checks that its root is recorded by the ' +
+      'configured confession-anchor contract on the configured Stellar network. ' +
+      'A false result means the proof/root is invalid; RPC failures return 503.',
+  })
+  @ApiResponse({ status: 200, description: 'Proof verification result' })
+  @ApiResponse({ status: 400, description: 'Malformed proof input' })
+  @ApiResponse({ status: 503, description: 'Stellar RPC unavailable; retry later' })
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  verifyAnchorProof(@Body() dto: VerifyAnchorProofDto) {
+    return this.anchorProofService.verifyAndStore(dto);
+  }
+
+  @Get('anchor/proofs/:commitment')
+  @ApiOperation({
+    summary: 'Get stored inclusion proofs for a commitment',
+    description:
+      'Returns previously accepted proof packages and rechecks their roots ' +
+      'against the configured network and contract.',
+  })
+  @ApiResponse({ status: 200, description: 'Stored proof packages' })
+  @ApiResponse({ status: 400, description: 'Invalid commitment format' })
+  @ApiResponse({ status: 503, description: 'Stellar RPC unavailable; retry later' })
+  getAnchorProofs(@Param('commitment') commitment: string) {
+    if (!/^[0-9a-fA-F]{64}$/.test(commitment)) {
+      throw new BadRequestException(
+        'Invalid commitment format. Expected 32-byte hex.',
+      );
+    }
+    return this.anchorProofService.getVerifiedProofs(commitment);
   }
 
   @Get('balance/:address')

@@ -1,4 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import * as StellarSDK from '@stellar/stellar-sdk';
 import { StellarConfigService } from './stellar-config.service';
 import { TransactionBuilderService } from './transaction-builder.service';
@@ -15,6 +19,7 @@ import {
   TransactionLatencyBudgetService,
   TransactionPhase,
 } from './transaction-latency-budget.service';
+import { StellarRpcEndpointPoolService } from './stellar-rpc-endpoint-pool.service';
 
 /**
  * A single step in a multi-contract workflow.
@@ -114,6 +119,7 @@ export class ContractService {
     private stellarConfig: StellarConfigService,
     private txBuilder: TransactionBuilderService,
     private latencyBudget: TransactionLatencyBudgetService,
+    private rpcEndpointPool: StellarRpcEndpointPoolService,
   ) {}
 
   /**
@@ -265,67 +271,106 @@ export class ContractService {
    * Uses bounded retries with exponential backoff for transient failures.
    */
   async verifyConfession(confessionHash: string): Promise<number | null> {
-    const rpcConfig = this.stellarConfig.getConfig();
-    const maxRetries = rpcConfig.rpcMaxRetries;
-    const baseDelay = rpcConfig.rpcRetryBaseDelayMs;
-    const maxDelay = rpcConfig.rpcRetryMaxDelayMs;
     const network = this.latencyBudget.currentNetwork();
     const operationClass = this.latencyBudget.classifyOperation(
       'verify_confession',
     );
+    const startedAt = Date.now();
+    try {
+      const timestamp = await this.simulateContractRead(
+        'verify_confession',
+        StellarSDK.nativeToScVal(Buffer.from(confessionHash, 'hex'), {
+          type: 'bytes',
+        }),
+      );
+      this.latencyBudget.recordLatency({
+        network,
+        operationClass,
+        phase: TransactionPhase.CONFIRMATION,
+        durationMs: Date.now() - startedAt,
+        success: true,
+      });
+      return timestamp === null || timestamp === undefined
+        ? null
+        : Number(timestamp);
+    } catch (error: unknown) {
+      this.latencyBudget.recordLatency({
+        network,
+        operationClass,
+        phase: TransactionPhase.SUBMISSION,
+        durationMs: Date.now() - startedAt,
+        success: false,
+      });
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`verifyConfession RPC failed: ${message}`);
+      throw new ServiceUnavailableException(
+        'Stellar anchor verification is temporarily unavailable',
+        { cause: error },
+      );
+    }
+  }
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const startedAt = Date.now();
-      try {
-        const contractId = this.stellarConfig.getContractId('confessionAnchor');
-        const contract = new StellarSDK.Contract(contractId);
-
-        const result = await contract.call(
-          'verify_confession',
-          StellarSDK.nativeToScVal(confessionHash, { type: 'bytes' }),
-        );
-
-        this.latencyBudget.recordLatency({
-          network,
-          operationClass,
-          phase: TransactionPhase.CONFIRMATION,
-          durationMs: Date.now() - startedAt,
-          success: true,
-        });
-
-        const timestamp = StellarSDK.scValToNative(result as any);
-        return timestamp || null;
-      } catch (error: unknown) {
-        this.latencyBudget.recordLatency({
-          network,
-          operationClass,
-          phase: TransactionPhase.SUBMISSION,
-          durationMs: Date.now() - startedAt,
-          success: false,
-        });
-        const message = error instanceof Error ? error.message : String(error);
-        const isRetryable =
-          message.toLowerCase().includes('timeout') ||
-          message.toLowerCase().includes('econnrefused') ||
-          message.toLowerCase().includes('econnreset') ||
-          message.toLowerCase().includes('network');
-
-        if (!isRetryable || attempt >= maxRetries) {
-          this.logger.warn(
-            'Confession not found on-chain: ' + String(confessionHash),
-          );
-          return null;
-        }
-
-        const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
-        this.logger.warn(
-          `verifyConfession RPC failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${message}`,
-        );
-        await new Promise((res) => setTimeout(res, delay));
+  /**
+   * Look up the root in the configured contract on the configured network.
+   * A missing root returns null; provider/simulation failures are surfaced so
+   * callers can distinguish an invalid proof from a retryable outage.
+   */
+  async verifyAnchorRoot(root: string): Promise<number | null> {
+    try {
+      const ledger = await this.simulateContractRead(
+        'verify_anchor_root',
+        StellarSDK.nativeToScVal(Buffer.from(root, 'hex'), { type: 'bytes' }),
+      );
+      if (ledger === null || ledger === undefined) {
+        return null;
       }
+      const parsedLedger = Number(ledger);
+      if (!Number.isSafeInteger(parsedLedger) || parsedLedger < 0) {
+        throw new Error('Anchor contract returned an invalid root ledger');
+      }
+      return parsedLedger;
+    } catch (error: unknown) {
+      if (error instanceof ServiceUnavailableException) {
+        throw error;
+      }
+      throw new ServiceUnavailableException(
+        'Unable to query the recorded anchor root; retry later',
+        { cause: error },
+      );
+    }
+  }
+
+  private async simulateContractRead(
+    functionName: string,
+    argument: StellarSDK.xdr.ScVal,
+  ): Promise<unknown> {
+    const contractId = this.stellarConfig.getContractId('confessionAnchor');
+    const operation = new StellarSDK.Contract(contractId).call(
+      functionName,
+      argument,
+    );
+    const transaction = await this.txBuilder.buildTransaction(
+      this.stellarConfig.getSignerPublicKey(),
+      [operation],
+    );
+    const response = await this.rpcEndpointPool.read((server) =>
+      server.simulateTransaction(transaction),
+    );
+    if (!StellarSDK.SorobanRpc.Api.isSimulationSuccess(response)) {
+      const error = (response as { error?: string }).error;
+      throw new Error(
+        error || `Soroban read simulation failed for ${functionName}`,
+      );
     }
 
-    return null;
+    const retval = (response as { result?: { retval?: StellarSDK.xdr.ScVal } })
+      .result?.retval;
+    if (!retval) {
+      throw new Error(
+        `Soroban read simulation returned no result for ${functionName}`,
+      );
+    }
+    return StellarSDK.scValToNative(retval as any);
   }
 
   /**

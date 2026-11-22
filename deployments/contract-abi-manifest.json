@@ -24,7 +24,9 @@
       "abi_sha256": "e568708b4d198a6c5b4d0ebc0390efb36e40274d4113fbb0242cf7114338797e",
       "functions": [
         "anchor_confession",
+        "record_anchor_root",
         "verify_confession",
+        "verify_anchor_root",
         "get_confession_count",
         "get_version",
         "get_event_schema_version",

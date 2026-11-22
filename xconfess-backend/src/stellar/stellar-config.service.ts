@@ -436,6 +436,28 @@ export class StellarConfigService implements OnModuleInit {
       : StellarSDK.Networks.TESTNET;
   }
 
+  getSignerPublicKey(): string {
+    const configuredPublicKey = this.configService.get<string>(
+      'STELLAR_SIGNER_PUBLIC_KEY',
+    );
+    if (configuredPublicKey) {
+      return configuredPublicKey;
+    }
+
+    const signerSecret =
+      this.configService.get<string>('STELLAR_SIGNER_SECRET_KEY') ??
+      this.configService.get<string>('STELLAR_SERVER_SECRET');
+    if (!signerSecret) {
+      throw new Error('A Stellar signer public key is not configured');
+    }
+
+    try {
+      return StellarSDK.Keypair.fromSecret(signerSecret).publicKey();
+    } catch {
+      throw new Error('The configured Stellar signer secret is invalid');
+    }
+  }
+
   private getHorizonUrl(network: StellarNetwork): string {
     return network === StellarNetwork.MAINNET
       ? 'https://horizon.stellar.org'

@@ -27,11 +27,13 @@
     "last_anchor_timestamp",
     "migrate",
     "pause",
+    "record_anchor_root",
     "revoke_admin",
     "revoke_operator",
     "schema_version",
     "transfer_owner",
     "unpause",
+    "verify_anchor_root",
     "verify_confession"
   ],
   "description": "ABI compatibility marker for confession-anchor contract. Update event_schema_version or error_registry_version on breaking changes."
