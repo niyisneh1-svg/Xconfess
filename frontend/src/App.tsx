@@ -12,6 +12,8 @@ import NotFoundPage from './pages/NotFoundPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import UpdateBanner from './components/UpdateBanner';
 import { clearUserScopedState } from './lib/userScopedState';
+import JourneySignalsPage from './pages/JourneySignalsPage';
+import TestFixtureRegistryPage from './pages/TestFixtureRegistryPage';
 
 function AppRoutes() {
   const { user } = useAuth();
@@ -43,6 +45,8 @@ function AppRoutes() {
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="projects/:id" element={<ProjectDetailPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="ops/journey-signals" element={<JourneySignalsPage />} />
+        <Route path="admin/testing-fixtures" element={<TestFixtureRegistryPage />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />
     </Routes>

@@ -20,6 +20,8 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm install --global npm@10.9.3
       - run: npm ci --include=optional --no-audit --no-fund
+      - name: Enforce selected guard branch coverage
+        run: npm run guard:branch-coverage
       - name: Validate route cache policy manifest
         run: npm run validate:cache-policy --workspace=xconfess-frontend
       - run: npm run audit:ci

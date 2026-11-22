@@ -21,13 +21,17 @@ import {
   ExecutionContext,
   CallHandler,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { tap } from 'rxjs';
+import { catchError } from 'rxjs/operators';
+import { throwError } from 'rxjs';
 import {
   findBudget,
   classifyLatency,
   LatencyBudget,
 } from '../performance/latency-budgets';
+import { JourneyReliabilityService } from '../../ops/journey-reliability.service';
 
 /** Statistical summary emitted by getMetrics(). */
 export interface RouteMetricSummary {
@@ -49,6 +53,10 @@ export interface RouteMetricSummary {
 @Injectable()
 export class PerformanceInterceptor implements NestInterceptor {
   private readonly logger = new Logger('Performance');
+  constructor(
+    @Optional()
+    private readonly journeyReliability?: JourneyReliabilityService,
+  ) {}
 
   /**
    * Raw duration samples per route key ("METHOD /path").
@@ -80,6 +88,7 @@ export class PerformanceInterceptor implements NestInterceptor {
         const level = classifyLatency(durationMs, budget);
 
         this.recordSample(method, route, durationMs);
+        this.recordJourneySample(req, method, route, durationMs, 'success');
 
         if (level === 'critical') {
           this.logger.error(
@@ -97,6 +106,12 @@ export class PerformanceInterceptor implements NestInterceptor {
         if (durationMs > 200) {
           this.logger.warn(`SLOW: ${method} ${route} took ${durationMs}ms`);
         }
+      }),
+      catchError((error) => {
+        const durationMs = Date.now() - start;
+        this.recordSample(method, route, durationMs);
+        this.recordJourneySample(req, method, route, durationMs, 'failure');
+        return throwError(() => error);
       }),
     );
   }
@@ -189,6 +204,30 @@ export class PerformanceInterceptor implements NestInterceptor {
     // Keep only the most recent N samples to bound memory.
     if (arr.length > PerformanceInterceptor.MAX_SAMPLES_PER_ROUTE) {
       arr.splice(0, arr.length - PerformanceInterceptor.MAX_SAMPLES_PER_ROUTE);
+    }
+  }
+
+  private recordJourneySample(
+    req: { method: string; baseUrl?: string; route?: { path?: string | string[] } },
+    method: string,
+    route: string,
+    durationMs: number,
+    outcome: 'success' | 'failure',
+  ): void {
+    if (!this.journeyReliability) return;
+
+    const normalizedRoute = `${method.toUpperCase()} ${route}`.toLowerCase();
+    let journey: 'publish' | 'report' | 'review' | undefined;
+    if (normalizedRoute.startsWith('post /confessions')) journey = 'publish';
+    if (normalizedRoute.startsWith('post /reports')) journey = 'report';
+    if (
+      normalizedRoute.includes('/admin/reports/') &&
+      (normalizedRoute.startsWith('patch ') || normalizedRoute.startsWith('post '))
+    ) {
+      journey = 'review';
+    }
+    if (journey) {
+      this.journeyReliability.recordOperation(journey, outcome, durationMs);
     }
   }
 

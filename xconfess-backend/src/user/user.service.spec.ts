@@ -13,10 +13,17 @@ import { CryptoUtil } from '../common/crypto.util';
 import { ConfigService } from '@nestjs/config';
 import { ErrorCode } from '../common/errors/error-codes';
 import { DataExportService } from '../data-export/data-export.service';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 
 jest.mock('bcryptjs', () => ({
   hash: jest.fn(),
   compare: jest.fn(),
+}));
+jest.mock('../email/email.service', () => ({
+  EmailService: class MockEmailService {},
+}));
+jest.mock('../data-export/data-export.service', () => ({
+  DataExportService: class MockDataExportService {},
 }));
 import * as bcrypt from 'bcryptjs';
 
@@ -25,6 +32,7 @@ describe('UserService', () => {
   let repository: Repository<User>;
   let mockEmailService: any;
   let mockDataExportService: any;
+  let mockCacheManager: { del: jest.Mock };
 
   const mockUser: User = {
     id: 1,
@@ -76,6 +84,9 @@ describe('UserService', () => {
     mockDataExportService = {
       cancelExportsForUser: jest.fn().mockResolvedValue(undefined),
     };
+    mockCacheManager = {
+      del: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -95,6 +106,10 @@ describe('UserService', () => {
         {
           provide: DataExportService,
           useValue: mockDataExportService,
+        },
+        {
+          provide: CACHE_MANAGER,
+          useValue: mockCacheManager,
         },
       ],
     }).compile();
@@ -684,6 +699,80 @@ describe('UserService', () => {
         '1',
         'privacy_settings_changed',
       );
+    });
+  });
+
+  describe('updatePersonalizationPreference', () => {
+    it('does not queue cleanup or invalidate derived state when persistence fails', async () => {
+      mockRepository.save.mockRejectedValueOnce(new Error('database unavailable'));
+
+      await expect(
+        service.updatePersonalizationPreference(1, false),
+      ).rejects.toThrow(InternalServerErrorException);
+
+      expect(mockDataExportService.cancelExportsForUser).not.toHaveBeenCalled();
+      expect(mockCacheManager.del).not.toHaveBeenCalled();
+    });
+
+    it('converges after queued export cancellation fails and is retried', async () => {
+      mockDataExportService.cancelExportsForUser
+        .mockRejectedValueOnce(new Error('export queue unavailable'))
+        .mockResolvedValueOnce(undefined);
+
+      await expect(
+        service.updatePersonalizationPreference(1, false),
+      ).rejects.toThrow(
+        'Personalization preference was saved, but export cleanup failed. Retry the update.',
+      );
+
+      expect(await service.getPersonalizationPreference(1)).toBe(false);
+      expect(mockCacheManager.del).not.toHaveBeenCalled();
+
+      await expect(
+        service.updatePersonalizationPreference(1, false),
+      ).resolves.toEqual({ personalizationEnabled: false });
+
+      expect(mockRepository.save).toHaveBeenCalledTimes(2);
+      expect(mockDataExportService.cancelExportsForUser).toHaveBeenCalledTimes(2);
+      expect(mockDataExportService.cancelExportsForUser).toHaveBeenLastCalledWith(
+        '1',
+        'privacy_settings_changed',
+      );
+      expect(mockCacheManager.del).toHaveBeenCalledTimes(3);
+      expect(mockRepository.save.mock.invocationCallOrder[0]).toBeLessThan(
+        mockDataExportService.cancelExportsForUser.mock.invocationCallOrder[0],
+      );
+      expect(
+        mockDataExportService.cancelExportsForUser.mock.invocationCallOrder[1],
+      ).toBeLessThan(mockCacheManager.del.mock.invocationCallOrder[0]);
+    });
+
+    it('reports derived-cache failure and converges after retry', async () => {
+      mockCacheManager.del.mockRejectedValueOnce(new Error('cache unavailable'));
+
+      await expect(
+        service.updatePersonalizationPreference(1, false),
+      ).rejects.toThrow(InternalServerErrorException);
+
+      expect(await service.getPersonalizationPreference(1)).toBe(false);
+      expect(mockDataExportService.cancelExportsForUser).toHaveBeenCalledTimes(1);
+      expect(mockCacheManager.del).toHaveBeenCalledTimes(3);
+
+      await expect(
+        service.updatePersonalizationPreference(1, false),
+      ).resolves.toEqual({ personalizationEnabled: false });
+
+      expect(mockDataExportService.cancelExportsForUser).toHaveBeenCalledTimes(2);
+      expect(mockCacheManager.del).toHaveBeenCalledTimes(6);
+      expect(mockCacheManager.del.mock.invocationCallOrder[3]).toBeGreaterThan(
+        mockDataExportService.cancelExportsForUser.mock.invocationCallOrder[1],
+      );
+    });
+
+    it('keeps cache invalidation best-effort for other account workflows', async () => {
+      mockCacheManager.del.mockRejectedValueOnce(new Error('cache unavailable'));
+
+      await expect(service.invalidatePersonalizationCache(1)).resolves.toBeUndefined();
     });
   });
 

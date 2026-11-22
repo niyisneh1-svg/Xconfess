@@ -59,6 +59,8 @@ import { HttpCacheInterceptor } from './common/interceptors/http-cache.intercept
 import { ResponseSizeInterceptor } from './common/interceptors/response-size.interceptor';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { RateLimitGuard } from './rate-limit/rate-limit.guard';
+import { OpsModule } from './ops/ops.module';
+import { TestingFixturesModule } from './testing-fixtures/testing-fixtures.module';
 
 @Module({
   imports: [
@@ -154,6 +156,8 @@ import { RateLimitGuard } from './rate-limit/rate-limit.guard';
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
     RateLimitModule,
+    OpsModule,
+    TestingFixturesModule,
     HealthModule,
     AnalyticsModule,
     UserModule,

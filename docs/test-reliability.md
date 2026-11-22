@@ -32,3 +32,31 @@ Use the retained Playwright report to compare attempts. A repeatable failure in 
 ## Mutation contention
 
 Concurrency coverage uses PostgreSQL rather than repository mocks. The reaction contention case sends synchronized duplicate mutations and asserts that all callers receive one canonical record, the unique invariant remains intact, and only one creation event is broadcast. Run it with `npm run test:e2e -- --runInBand --runTestsByPath test/reaction-contention.e2e-spec.ts` from `xconfess-backend` against an isolated test database.
+
+## Selected guard branch coverage
+
+The backend CI enforces branch coverage for these authorization/privacy
+boundaries: `AdminGuard`, `CapabilityGuard`, `ModerationAccessGrantGuard`,
+`StepUpGuard`, and `OwnershipGuard`. The dedicated Jest configuration collects
+coverage only from those files and runs their focused guard specifications.
+Every instrumented branch must be exercised unless it has an approved
+exception.
+
+Run the gate locally:
+
+```bash
+npm run guard:branch-coverage
+```
+
+The command fails when Jest fails, when a selected source branch is uncovered
+without an exception, or when an exception is stale or malformed. Exceptions
+are recorded in `.github/guard-coverage-exceptions.json` and must identify the
+source file, line, branch type/index, reason, reviewer, GitHub review reference,
+review date, and expiry. Exceptions expire within 90 days and must not mask a
+branch that is now covered. The manifest is versioned and starts empty; there
+is no runtime configuration or impact on existing application data or clients.
+
+The report prints covered/total branch counts without collecting request,
+principal, or fixture data. Adding or removing branches is handled by the
+measured coverage map; stale exception coordinates fail CI and must be
+reviewed rather than silently carried forward.

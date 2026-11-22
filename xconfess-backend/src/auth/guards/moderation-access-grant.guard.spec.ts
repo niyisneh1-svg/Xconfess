@@ -79,4 +79,61 @@ describe('ModerationAccessGrantGuard', () => {
     );
     expect(repository.findOne).not.toHaveBeenCalled();
   });
+
+  it('allows an active administrator with the requested scoped grant', async () => {
+    const { guard } = createGuard(
+      {
+        id: 'grant-admin',
+        userId: 42,
+        scope,
+        expiresAt: new Date(Date.now() + 60_000),
+      } as ModerationAccessGrant,
+      { id: 42, role: UserRole.ADMIN, is_active: true },
+    );
+    await expect(guard.canActivate(context as never)).resolves.toBe(true);
+  });
+
+  it('does not perform account lookups when scope is not required', async () => {
+    const reflector = { getAllAndOverride: jest.fn().mockReturnValue(undefined) };
+    const repository = { findOne: jest.fn() };
+    const userRepository = { findOne: jest.fn() };
+    const guard = new ModerationAccessGrantGuard(
+      reflector as unknown as Reflector,
+      repository as unknown as Repository<ModerationAccessGrant>,
+      userRepository as unknown as Repository<User>,
+    );
+
+    await expect(guard.canActivate(context as never)).resolves.toBe(true);
+    expect(userRepository.findOne).not.toHaveBeenCalled();
+    expect(repository.findOne).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing identity and active non-moderator accounts', async () => {
+    const { guard: missingIdentity } = createGuard(null);
+    const missingIdentityContext = {
+      ...context,
+      switchToHttp: () => ({ getRequest: () => ({ user: {} }) }),
+    };
+    await expect(missingIdentity.canActivate(missingIdentityContext as never))
+      .rejects.toBeInstanceOf(ForbiddenException);
+
+    const { guard: nonModerator, repository } = createGuard(null, {
+      id: 42,
+      role: UserRole.USER,
+      is_active: true,
+    });
+    await expect(nonModerator.canActivate(context as never))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.findOne).not.toHaveBeenCalled();
+  });
+
+  it('propagates grant-store failures instead of treating them as missing grants', async () => {
+    const { guard } = createGuard(null);
+    const storeFailure = new Error('grant store unavailable');
+    const repository = (guard as unknown as { grantRepository: Repository<ModerationAccessGrant> })
+      .grantRepository as unknown as { findOne: jest.Mock };
+    repository.findOne.mockRejectedValue(storeFailure);
+
+    await expect(guard.canActivate(context as never)).rejects.toBe(storeFailure);
+  });
 });

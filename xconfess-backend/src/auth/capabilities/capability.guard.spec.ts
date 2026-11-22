@@ -59,6 +59,21 @@ describe('CapabilityGuard (issue #183)', () => {
     ).toBe(true);
   });
 
+  it('uses the static capability policy when no injected policy is available', () => {
+    reflector.getAllAndOverride.mockReturnValue({
+      capabilities: [CAPABILITY_MANAGE_USERS],
+    });
+    const guardWithoutPolicy = new CapabilityGuard(
+      reflector as unknown as Reflector,
+    );
+
+    expect(
+      guardWithoutPolicy.canActivate(
+        createContext({ id: 1, role: UserRole.ADMIN }),
+      ),
+    ).toBe(true);
+  });
+
   it('allows a moderator to moderate content', () => {
     reflector.getAllAndOverride.mockReturnValue({
       capabilities: [CAPABILITY_MODERATE_CONTENT],

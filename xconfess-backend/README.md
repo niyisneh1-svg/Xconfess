@@ -39,8 +39,9 @@ For operational details on managing email templates and rollouts, see the [Templ
 Users can explicitly opt out of personalization. When enabled, the discovery/feed boundary bypasses every personal ranking feature (affinity, interaction history, per-user boosts) and serves only non-personalized ordering.
 
 - **Preference persistence**: the opt-out is stored on the user record and survives cache invalidation; after a cache flush the mode is re-read from the database before any ranking runs.
-- **Authorization**: only the authenticated owner may toggle the preference (`PATCH /api/users/me/discovery-preferences`); admin overrides require the admin RBAC guard and are audited.
+- **Authorization**: only the authenticated owner may toggle the preference (`PATCH /api/users/me/personalization`); missing authentication returns 401 and an attempted cross-account update returns 403.
 - **Failure semantics**: if the preference cannot be loaded, the request fails closed to the non-personalized path rather than silently personalizing.
+- **Update retries**: persistence happens before active export work is cancelled and personalization caches are invalidated. A failure in either follow-up returns an error even though the preference may already be saved; retry the same value to repeat the idempotent cleanup. The update reports success only after all cache namespaces are invalidated.
 - **Tests**: `npm run backend:test` covers the API toggle, the client behavior after cache invalidation, and the rejection path for unauthorized callers.
 
 ## Ranking Quality Drift Monitoring

@@ -13,6 +13,9 @@ payloads, see [Log and Trace Redaction](#log-and-trace-redaction) below.
 - Use the approved synthetic placeholders listed below.
 - Run `npm run secret-scan` locally before opening a PR; the CI will fail if
   secrets are found.
+- Register test fixtures in `test-fixtures/registry.json` with origin,
+  synthetic status, permitted use, cleanup policy, and repository-relative files.
+- Run `npm run fixture:privacy-gate` before backend or frontend test suites.
 
 ---
 
@@ -119,6 +122,38 @@ to `false` disables masking and is intended only for local debugging. Never
 disable redaction in staging or production; the CI gate
 `npm run secret-scan && npm run audit:ci && npm run backend:test` will fail if
 redaction tests are skipped.
+
+---
+
+## Fixture Registry and CI Contract
+
+`test-fixtures/registry.json` is the source of truth for fixture metadata.
+Each entry must declare:
+
+- `origin`: `generated-by-test`, `repository-owned`, or
+  `approved-vendor-synthetic`
+- `synthetic`: must be `true`
+- `permittedUse`: at least one of `unit-test`, `integration-test`, or
+  `documentation`
+- `cleanupPolicy`: `delete-after-test`, `ephemeral-in-test-run`, or
+  `retain-approved-anonymous`
+- `files`: repository-relative fixture files
+
+The `npm run fixture:privacy-gate` command fails CI if metadata is missing,
+a fixture is marked real, a path is unsafe, a fixture file contains a
+real-looking email, phone number, SSN, or supported secret pattern. The gate
+has no retry or bypass mode: fix the fixture or remove it and rerun.
+
+Backend and frontend test scripts run this gate automatically. The admin API
+`GET/POST /api/admin/testing-fixtures` provides the persisted compatibility
+view and requires JWT plus admin authorization. Invalid metadata returns 400;
+unauthenticated and unauthorized requests return 401 and 403. The API does not
+accept real fixtures or free-form cleanup policy values.
+
+Existing clients remain compatible because the migration only adds a new table
+and all endpoints are additive. Existing data is not rewritten. Persisted
+records are not backfilled; initial fixture lists are empty until the registry
+is synchronized.
 
 ---
 

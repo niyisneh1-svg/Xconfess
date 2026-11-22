@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "fixtures": [
+    {
+      "name": "deterministic-test-environment",
+      "origin": "generated-by-test",
+      "synthetic": true,
+      "permittedUse": ["unit-test", "integration-test"],
+      "cleanupPolicy": "delete-after-test",
+      "files": [
+        "xconfess-backend/test/deterministic/deterministic-fixtures.ts"
+      ]
+    },
+    {
+      "name": "frontend-wallet-mocks",
+      "origin": "repository-owned",
+      "synthetic": true,
+      "permittedUse": ["unit-test", "integration-test"],
+      "cleanupPolicy": "ephemeral-in-test-run",
+      "files": [
+        "xconfess-frontend/tests/mocks/wallet-fixtures.ts",
+        "xconfess-frontend/tests/mocks/anchor-fixtures.ts"
+      ]
+    }
+  ]
+}

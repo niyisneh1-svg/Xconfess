@@ -1056,12 +1056,23 @@ export class UserService {
       );
     }
 
-    await this.dataExportService.cancelExportsForUser(
-      String(userId),
-      'privacy_settings_changed',
-    );
+    try {
+      await this.dataExportService.cancelExportsForUser(
+        String(userId),
+        'privacy_settings_changed',
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to cancel exports after personalization preference update: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw new InternalServerErrorException(
+        'Personalization preference was saved, but export cleanup failed. Retry the update.',
+      );
+    }
 
-    await this.invalidatePersonalizationCache(userId);
+    await this.invalidatePersonalizationCache(userId, true);
 
     this.logger.debug(
       `Personalization ${enabled ? 'enabled' : 'disabled'} for user ${userId}`,
@@ -1072,9 +1083,12 @@ export class UserService {
 
   /**
    * Drop cached discovery results for a user across all personalization
-   * namespaces. Failures are logged but never block the preference write.
+   * namespaces. Report failures so the caller can retry the idempotent update.
    */
-  async invalidatePersonalizationCache(userId: number): Promise<void> {
+  async invalidatePersonalizationCache(
+    userId: number,
+    throwOnFailure = false,
+  ): Promise<void> {
     if (!this.cacheManager) {
       return;
     }
@@ -1083,19 +1097,26 @@ export class UserService {
       (namespace) => `${namespace}:user:${userId}`,
     );
 
-    await Promise.all(
-      keys.map(async (key) => {
-        try {
-          await this.cacheManager!.del(key);
-        } catch (err) {
-          this.logger.warn(
-            `Failed to invalidate cache key ${key}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }),
+    const results = await Promise.allSettled(
+      keys.map((key) => this.cacheManager!.del(key)),
     );
+    const failures = results.flatMap((result, index) => {
+      if (result.status === 'fulfilled') return [];
+      this.logger.warn(
+        `Failed to invalidate cache key ${keys[index]}: ${
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason)
+        }`,
+      );
+      return [result.reason];
+    });
+
+    if (failures.length > 0 && throwOnFailure) {
+      throw new InternalServerErrorException(
+        'Personalization preference was saved, but cache invalidation failed. Retry the update.',
+      );
+    }
   }
 
   // =========================

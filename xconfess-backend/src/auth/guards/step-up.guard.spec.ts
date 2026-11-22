@@ -1,4 +1,7 @@
 import { ExecutionContext } from '@nestjs/common';
+jest.mock('../step-up.service', () => ({
+  StepUpService: class StepUpService {},
+}));
 import { StepUpGuard, STEP_UP_TOKEN_HEADER } from './step-up.guard';
 import { StepUpService } from '../step-up.service';
 import { AppException } from '../../common/errors/app-exception';
