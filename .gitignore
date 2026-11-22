@@ -10,6 +10,7 @@ node_modules/
 *.log
 *_output.txt
 test_output.txt
+*.pid
 
 # Build, cache, and test output
 dist/
