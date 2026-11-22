@@ -1361,7 +1361,7 @@ export class ConfessionService {
       });
 
       if (!confession) {
-        throw new NotFoundException(`Confession with ID ${id} not found`);
+        throw new NotFoundException('Confession not found');
       }
 
       return this.toResponseDto(confession);
